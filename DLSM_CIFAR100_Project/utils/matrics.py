@@ -27,7 +27,7 @@ def get_activations(data_loader, model, device, num_samples):
     return np.concatenate(activations, axis=0)
 
 # FID Calculation
-def calculate_fid(generator, data_loader, device, num_samples=5000):
+def calculate_fid(generator, data_loader, device, num_samples=1000):  # 샘플 수 감소
     inception_model = get_inception_model(device)
     real_activations = get_activations(data_loader, inception_model, device, num_samples)
 
@@ -50,9 +50,6 @@ def calculate_fid(generator, data_loader, device, num_samples=5000):
 
 # Inception Score Calculation
 def calculate_inception_score(generator, data_loader, device, num_samples=5000):
-    """
-    Calculate the Inception Score (IS) for generated images.
-    """
     inception_model = get_inception_model(device)
     generator.eval()
     probs = []
