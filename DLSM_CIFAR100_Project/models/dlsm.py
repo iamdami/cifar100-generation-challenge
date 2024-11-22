@@ -6,8 +6,8 @@ import torch.nn.functional as F
 class DLSMGenerator(nn.Module):
     def __init__(self, noise_dim, num_classes, img_channels):
         super(DLSMGenerator, self).__init__()
-        self.noise_dim = noise_dim  # noise_dim 속성 추가
-        self.num_classes = num_classes  # num_classes 속성 추가
+        self.noise_dim = noise_dim
+        self.num_classes = num_classes
         self.label_embed = nn.Embedding(num_classes, noise_dim)
 
         self.model = nn.Sequential(
@@ -31,6 +31,8 @@ class DLSMGenerator(nn.Module):
 class DLSMDiscriminator(nn.Module):
     def __init__(self, num_classes, img_channels):
         super(DLSMDiscriminator, self).__init__()
+        self.num_classes = num_classes
+
         self.model = nn.Sequential(
             nn.Conv2d(img_channels, 64, kernel_size=3, stride=2, padding=1),  # (32x32) -> (16x16)
             nn.BatchNorm2d(64),
@@ -52,21 +54,24 @@ class DLSMDiscriminator(nn.Module):
         )
         self.flatten = nn.Flatten()
 
-        # 최종 Conv2D 출력 크기 계산: 512 채널, 2x2 크기
-        self.fc_input_dim = 512 * 2 * 2  # = 2048
-
+        # Final fully connected layers
+        self.fc_input_dim = 512 * 2 * 2  # 2048
         self.fc = nn.Sequential(
-            nn.Linear(self.fc_input_dim + num_classes, 1024),  # num_classes 추가
+            nn.Linear(self.fc_input_dim + num_classes, 1024),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(1024, 1),
             nn.Sigmoid()
         )
 
     def forward(self, img, labels):
+        # Extract image features
         img_features = self.model(img)
         img_features = self.flatten(img_features)
-    
-        labels_one_hot = F.one_hot(labels, num_classes=100).float().to(img.device)
+
+        # Convert labels to one-hot and concatenate with image features
+        labels_one_hot = F.one_hot(labels, num_classes=self.num_classes).float().to(img.device)
         input_data = torch.cat((img_features, labels_one_hot), dim=1)
+
+        # Forward pass through fully connected layers
         output = self.fc(input_data)
         return output
