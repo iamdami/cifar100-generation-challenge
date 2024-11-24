@@ -12,51 +12,31 @@ sys.path.append(os.path.abspath("/home/cipher/Dami/DLSM_CIFAR100_Project/"))
 
 # Config
 CONFIG = {
-    "noise_dim": 128,                # 노이즈 차원 증가
-    "batch_size": 128,               # 배치 크기 증가 (학습 시간 단축)
+    "noise_dim": 128,
+    "batch_size": 64,  # Reduced batch size
     "num_classes": 100,
     "img_channels": 3,
-    "lr": 0.0001,                    # 초기 학습률 감소 (안정성 향상)
+    "g_lr": 0.0002,  # Increased learning rate for Generator
+    "d_lr": 0.00005,  # Decreased learning rate for Discriminator
     "betas": (0.5, 0.999),
-    "epochs": 150,                   # 학습 Epoch 제한
-    "grad_clip": 0.5,                # 그래디언트 클리핑
-    "scheduler": "cosine_annealing"  # Cosine Annealing Scheduler 사용
+    "epochs": 100,
+    "grad_clip": 0.5,
+    "scheduler": "cosine_annealing",
+    "label_smoothing": 0.9,  # Label smoothing value
+    "noise_reg": 0.1  # Regularization term for noise
 }
-
-# Plotting Function
-def plot_results(epochs, d_loss, g_loss, fid, is_score, intra_fid, save_dir):
-    plt.figure()
-    # Loss Plot
-    plt.plot(epochs, d_loss, label="Discriminator Loss")
-    plt.plot(epochs, g_loss, label="Generator Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Generator and Discriminator Loss")
-    plt.legend()
-    plt.savefig(os.path.join(save_dir, "loss_plot.png"))
-    plt.close()
-
-    # FID, IS, Intra-FID Plot
-    plt.figure()
-    plt.plot(epochs, fid, label="FID")
-    plt.plot(epochs, is_score, label="Inception Score")
-    plt.plot(epochs, intra_fid, label="Intra-FID")
-    plt.xlabel("Epoch")
-    plt.ylabel("Score")
-    plt.title("FID, IS, and Intra-FID Scores")
-    plt.legend()
-    plt.savefig(os.path.join(save_dir, "metrics_plot.png"))
-    plt.close()
-
 
 # Training Function
 def train_dlsm():
     # Unpack Config
     noise_dim = CONFIG["noise_dim"]
     batch_size = CONFIG["batch_size"]
-    lr = CONFIG["lr"]
+    g_lr = CONFIG["g_lr"]
+    d_lr = CONFIG["d_lr"]
     epochs = CONFIG["epochs"]
     grad_clip = CONFIG["grad_clip"]
+    label_smoothing = CONFIG["label_smoothing"]
+    noise_reg = CONFIG["noise_reg"]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load Data
@@ -68,15 +48,14 @@ def train_dlsm():
 
     # Loss and Optimizers
     criterion = nn.BCELoss()
-    optimizer_g = optim.Adam(generator.parameters(), lr=lr, betas=CONFIG["betas"])
-    optimizer_d = optim.Adam(discriminator.parameters(), lr=lr, betas=CONFIG["betas"])
+    optimizer_g = optim.Adam(generator.parameters(), lr=g_lr, betas=CONFIG["betas"])
+    optimizer_d = optim.Adam(discriminator.parameters(), lr=d_lr, betas=CONFIG["betas"])
 
     # Scheduler
-    if CONFIG["scheduler"] == "cosine_annealing":
-        scheduler_g = optim.lr_scheduler.CosineAnnealingLR(optimizer_g, T_max=epochs)
-        scheduler_d = optim.lr_scheduler.CosineAnnealingLR(optimizer_d, T_max=epochs)
+    scheduler_g = optim.lr_scheduler.CosineAnnealingLR(optimizer_g, T_max=epochs)
+    scheduler_d = optim.lr_scheduler.CosineAnnealingLR(optimizer_d, T_max=epochs)
 
-    # Logging Setup
+    # Logging
     log_dir = "./logs"
     os.makedirs(log_dir, exist_ok=True)
     log_file = open(os.path.join(log_dir, "metrics_log.txt"), "w")
@@ -97,21 +76,22 @@ def train_dlsm():
             real_imgs, labels = real_imgs.to(device), labels.to(device)
             current_batch_size = real_imgs.size(0)  # Handle last batch
 
-            # Generate Fake Images
+            # Generate Noise with Regularization
             noise = torch.randn(current_batch_size, noise_dim).to(device)
+            noise += CONFIG["noise_reg"] * torch.randn_like(noise)  # Add regularization
+
+            # Generate Fake Images
             fake_imgs = generator(noise, labels)
-            
-            # Debugging output (print every 10th batch only to reduce log size)
-            if epoch % 10 == 0:
-                print(f"Noise shape: {noise.shape}, Labels shape: {labels.shape}")
-                print(f"Generated Fake Images shape: {fake_imgs.shape}")
 
             # Train Discriminator
             real_validity = discriminator(real_imgs, labels)
             fake_validity = discriminator(fake_imgs.detach(), labels)
 
-            d_loss = criterion(real_validity, torch.ones_like(real_validity)) + \
-                     criterion(fake_validity, torch.zeros_like(fake_validity))
+            real_labels = torch.full_like(real_validity, label_smoothing)  # Apply Label Smoothing
+            fake_labels = torch.zeros_like(fake_validity)
+
+            d_loss = criterion(real_validity, real_labels) + \
+                     criterion(fake_validity, fake_labels)
             optimizer_d.zero_grad()
             d_loss.backward()
             nn.utils.clip_grad_norm_(discriminator.parameters(), grad_clip)  # Gradient Clipping
@@ -127,10 +107,9 @@ def train_dlsm():
             optimizer_g.step()
             total_g_loss += g_loss.item()
 
-        # Scheduler Update
-        if CONFIG["scheduler"] == "cosine_annealing":
-            scheduler_g.step()
-            scheduler_d.step()
+        # Scheduler Update (after epoch)
+        scheduler_g.step()
+        scheduler_d.step()
 
         # Average Loss for Epoch
         avg_d_loss = total_d_loss / len(train_loader)
@@ -141,7 +120,7 @@ def train_dlsm():
         is_score, is_std = calculate_inception_score(generator, train_loader, device, num_samples=1000)
         intra_fid = calculate_intra_fid(generator, train_loader, device, num_samples=1000)
 
-        # Log Epoch Results
+        # Log Results
         epoch_list.append(epoch + 1)
         d_loss_list.append(avg_d_loss)
         g_loss_list.append(avg_g_loss)
@@ -154,9 +133,6 @@ def train_dlsm():
 
     log_file.close()
     print("Training Complete!")
-
-    # Plot results
-    plot_results(epoch_list, d_loss_list, g_loss_list, fid_list, is_list, intra_fid_list, log_dir)
 
 
 if __name__ == "__main__":
