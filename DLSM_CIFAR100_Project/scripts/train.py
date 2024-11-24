@@ -7,6 +7,8 @@ from data.data_loader import get_dataloader
 from models.dlsm import DLSMGenerator, DLSMDiscriminator
 from utils.metrics import calculate_fid, calculate_inception_score, calculate_intra_fid
 import matplotlib.pyplot as plt
+import sys
+sys.path.append(os.path.abspath("/home/cipher/Dami/DLSM_CIFAR100_Project/"))
 
 # Config
 CONFIG = {
@@ -91,11 +93,18 @@ def train_dlsm():
         discriminator.train()
 
         for real_imgs, labels in train_loader:
+            # Ensure batch sizes match
             real_imgs, labels = real_imgs.to(device), labels.to(device)
+            current_batch_size = real_imgs.size(0)  # Handle last batch
 
             # Generate Fake Images
-            noise = torch.randn(batch_size, noise_dim).to(device)
+            noise = torch.randn(current_batch_size, noise_dim).to(device)
             fake_imgs = generator(noise, labels)
+            
+            # Debugging output (print every 10th batch only to reduce log size)
+            if epoch % 10 == 0:
+                print(f"Noise shape: {noise.shape}, Labels shape: {labels.shape}")
+                print(f"Generated Fake Images shape: {fake_imgs.shape}")
 
             # Train Discriminator
             real_validity = discriminator(real_imgs, labels)
